@@ -1,0 +1,52 @@
+name: Release solution
+on:
+  push:
+    branches:
+      - master
+jobs:
+  build:
+    name: Build solution
+    runs-on: windows-latest
+    if: "contains(github.event.head_commit.message, 'Release solution')"
+    steps:
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.0.2
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bump version and push tag
+        id: create-tag
+        uses: mathieudutour/github-tag-action@v4.6
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Ensure NuGet Source
+        uses: fabriciomurta/ensure-nuget-source@v1
+      - name: Run MSBuild
+        if: ${{ success() }}
+        run: msbuild -restore -target:build -property:Configuration=Release -property:VersionNumber=${{ steps.create-tag.outputs.new_version }}
+      - name: Pack binaries
+        run: Compress-Archive ./bin/Release/* ./docfx-plugins-extractsearchindex.zip
+      - name: Create release
+        id: create-release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.create-tag.outputs.new_tag }}
+          release_name: Release ${{ steps.create-tag.outputs.new_tag }}
+          draft: false
+          prerelease: false
+      - name: Upload binaries
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./docfx-plugins-extractsearchindex.zip
+          asset_name: docfx-plugins-extractsearchindex.zip
+          asset_content_type: application/zip
+      - name: Cleanup tags
+        if: ${{ failure() && steps.create-tag.outputs.new_tag == 'undefined' }}
+        run: git push origin :refs/tags/${{ steps.create-tag.outputs.new_tag }}

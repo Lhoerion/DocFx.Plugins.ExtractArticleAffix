@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="UpdateAssemblyVersionNumber" BeforeTargets="AssemblyVersionUpdate">
+    <PropertyGroup Condition=" '$(VersionNumber)' == '' ">
+      <AssemblyVersionNumber>1.0.0</AssemblyVersionNumber>
+      <AssemblyInformationalVersion>1.0.0</AssemblyInformationalVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition=" '$(VersionNumber)' != '' ">
+      <AssemblyVersionNumber>$(VersionNumber)</AssemblyVersionNumber>
+      <AssemblyInformationalVersion>$(VersionNumber)</AssemblyInformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>
