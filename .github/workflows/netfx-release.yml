@@ -27,7 +27,7 @@ jobs:
         if: ${{ success() }}
         run: msbuild -restore -target:build -property:Configuration=Release -property:VersionNumber=${{ steps.create-tag.outputs.new_version }}
       - name: Pack binaries
-        run: Compress-Archive ./bin/Release/* ./docfx-plugins-extractsearchindex.zip
+        run: Compress-Archive ./bin/Release/* ./docfx-plugins-extractarticleaffix.zip
       - name: Create release
         id: create-release
         uses: actions/create-release@v1
@@ -44,8 +44,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create-release.outputs.upload_url }}
-          asset_path: ./docfx-plugins-extractsearchindex.zip
-          asset_name: docfx-plugins-extractsearchindex.zip
+          asset_path: ./docfx-plugins-extractarticleaffix.zip
+          asset_name: docfx-plugins-extractarticleaffix.zip
           asset_content_type: application/zip
       - name: Cleanup tags
         if: ${{ failure() && steps.create-tag.outputs.new_tag == 'undefined' }}
