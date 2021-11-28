@@ -3,12 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Composition;
 using System.Collections.Immutable;
 using Microsoft.DocAsCode.Common;
 using Microsoft.DocAsCode.Plugins;
-
 using HtmlAgilityPack;
 using Newtonsoft.Json;
 
@@ -18,46 +16,13 @@ namespace DocFx.Plugins.ExtractArticleAffix
     // ReSharper disable once UnusedType.Global
     public class ExtractArticleAffix : IPostProcessor
     {
-        private string _lunrTokenSeparator;
-
-        private string _lunrRef;
-
-        private Dictionary<string, object> _lunrFields;
-
-        private List<string> _lunrStopWords;
-
-        private List<string> _lunrMetadataWhitelist;
+        private bool _disableAffix;
 
         public ImmutableDictionary<string, object> PrepareMetadata(ImmutableDictionary<string, object> metadata)
         {
-            if (!metadata.ContainsKey("_enableSearch"))
+            if (metadata.TryGetValue("_disableAffix", out var disableAffix))
             {
-                metadata = metadata.Add("_enableSearch", true);
-            }
-
-            if (metadata.TryGetValue("_lunrTokenSeparator", out var lunrTokenSeparator))
-            {
-                _lunrTokenSeparator = (string)lunrTokenSeparator;
-            }
-
-            if (metadata.TryGetValue("_lunrRef", out var lunrRef))
-            {
-                _lunrRef = (string)lunrRef;
-            }
-
-            if (metadata.TryGetValue("_lunrFields", out var lunrFields))
-            {
-                _lunrFields = (Dictionary<string, object>)lunrFields;
-            }
-
-            if (metadata.TryGetValue("_lunrStopWords", out var lunrStopWords))
-            {
-                _lunrStopWords = (List<string>)lunrStopWords;
-            }
-
-            if (metadata.TryGetValue("_lunrStopWords", out var lunrMetadataWhitelist))
-            {
-                _lunrMetadataWhitelist = (List<string>)lunrMetadataWhitelist;
+                _disableAffix = (bool)disableAffix;
             }
 
             return metadata;
@@ -70,6 +35,11 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 throw new ArgumentException("Base directory can not be null");
             }
 
+            if (_disableAffix)
+            {
+                return manifest;
+            }
+
             var htmlFiles = (from item in manifest.Files ?? Enumerable.Empty<ManifestItem>()
                 from output in item.OutputFiles
                 where item.DocumentType != "Toc" && output.Key.Equals(".html", StringComparison.OrdinalIgnoreCase)
@@ -79,50 +49,57 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 return manifest;
             }
 
-            Logger.LogInfo($"Extracting index data from {htmlFiles.Count} html files");
-            foreach (var (relativePath, item) in htmlFiles)
+            foreach (var (relativePath, _) in htmlFiles)
             {
                 var filePath = Path.Combine(outputFolder, relativePath);
                 var html = new HtmlDocument();
-                Logger.LogDiagnostic($"Extracting index data from {filePath}");
 
                 if (!EnvironmentContext.FileAbstractLayer.Exists(filePath)) continue;
                 try
                 {
-                    using var stream = EnvironmentContext.FileAbstractLayer.OpenRead(filePath);
+                    using var stream = new MemoryStream();
+                    using (var fileStream = EnvironmentContext.FileAbstractLayer.OpenRead(filePath))
+                    {
+                        fileStream.CopyTo(stream);
+                        stream.Position = 0;
+                    }
+
                     html.Load(stream, Encoding.UTF8);
+                    stream.Position = 0;
+
+                    var sideAffix = html.DocumentNode.SelectSingleNode("//div[@id=\"affix\"]");
+                    var test = TraverseArticle(html.DocumentNode);
+                    if (test.Count <= 0)
+                    {
+                        sideAffix.Attributes.Add("class", "empty");
+                        sideAffix.Attributes.Add("style", "display: none;");
+                        continue;
+                    }
+
+                    var test2 = FormList(html.DocumentNode, test, new[] { "nav", "bs-docs-sidenav" });
+                    sideAffix.InnerHtml = "";
+                    sideAffix.AppendChild(test2);
+
+                    html.Save(stream, Encoding.UTF8);
+                    stream.Position = 0;
+
+                    using (var fileStream = EnvironmentContext.FileAbstractLayer.Create(filePath))
+                    {
+                        stream.CopyTo(fileStream);
+                    }
+
+                    Logger.LogDiagnostic($"Successfully saved affix data to {filePath}");
                 }
                 catch (Exception ex)
                 {
                     Logger.LogWarning($"Warning: Can't load content from {filePath}: {ex.Message}");
-                    continue;
                 }
-
-                var test = TraverseArticle(html.DocumentNode);
-                EnvironmentContext.FileAbstractLayer.WriteAllText(Path.Combine(outputFolder, relativePath + "_affix.html"), FormList(html.DocumentNode, test, new [] {"nav", "bs-docs-sidenav"}).WriteContentTo());
-                // EnvironmentContext.FileAbstractLayer.WriteAllText(Path.Combine(outputFolder, relativePath + ".json"), JsonUtility.Serialize(test, Formatting.Indented));
             }
 
             return manifest;
         }
 
-        public class Header
-        {
-            public string Type;
-
-            [JsonIgnore]
-            public Header Parent;
-
-            public string Id;
-
-            public string Name;
-
-            public string Href;
-
-            public List<Header> Children = new List<Header>();
-        }
-
-        public bool IsConceptualArticle(HtmlNode htmlNode)
+        private static bool IsConceptualArticle(HtmlNode htmlNode)
         {
             return htmlNode
                 .SelectSingleNode(
@@ -130,13 +107,15 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 .Attributes["class"].Value.Split(' ').Contains("Conceptual");
         }
 
-        public List<Header> TraverseArticle(HtmlNode htmlRoot)
+        private static List<Header> TraverseArticle(HtmlNode htmlRoot)
         {
             var headers = htmlRoot.SelectNodes(
                 "//article[@id=\"_content\"]/*[self::h1 or self::h2 or self::h3 or self::h4]");
-            var stack = new List<Header>{
-                new Header {
-                    Type = "H0",
+            var stack = new List<Header>
+            {
+                new Header
+                {
+                    Type = "H0"
                 }
             };
 
@@ -148,13 +127,17 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 var obj = new Header
                 {
                     Parent = curr,
-                    Type = header.Name,
+                    Type = header.Name.ToUpper(),
                     Id = header.Attributes.Contains("id") ? header.Attributes["id"].Value : "",
                     Name = header.InnerText,
-                    Href = xref != null && xref.Attributes.Contains("class") && xref.Attributes["class"].Value.Contains("xref") ? xref.Attributes["href"].Value : "#" + (header.Attributes.Contains("id") ? header.Attributes["id"].Value : "")
+                    Href = xref != null && xref.Attributes.Contains("class") &&
+                           xref.Attributes["class"].Value.Contains("xref")
+                        ? xref.Attributes["href"].Value
+                        : "#" + (header.Attributes.Contains("id") ? header.Attributes["id"].Value : "")
                 };
 
-                switch(string.Compare(obj.Type, curr.Type, StringComparison.InvariantCultureIgnoreCase)) {
+                switch (string.Compare(obj.Type, curr.Type, StringComparison.InvariantCultureIgnoreCase))
+                {
                     case 0:
                         obj.Parent = curr.Parent;
                         curr.Parent.Children.Add(curr = obj);
@@ -170,25 +153,32 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 }
             }
 
-            return stack[0].Children.Count > 0 && !IsConceptualArticle(htmlRoot) ? stack[0].Children[0].Children : stack[0].Children;
+            return stack[0].Children.Count > 0 && !IsConceptualArticle(htmlRoot)
+                ? stack[0].Children[0].Children
+                : stack[0].Children;
         }
 
-        private static int Level = 1;
+        private static int _level = 1;
 
-        public HtmlNode FormList(HtmlNode node, List<Header> item, string[] classes) {
+        private static HtmlNode FormList(HtmlNode node, List<Header> item, string[] classes)
+        {
             return GetList(node, new Header
             {
                 Children = item,
             }, string.Join(" ", classes));
         }
 
-        public HtmlNode GetList(HtmlNode node, Header model, string cls) {
+        private static HtmlNode GetList(HtmlNode node, Header model, string cls)
+        {
             if (model == null || model.Children.Count <= 0) return null;
             var l = model.Children.Count;
             if (l == 0) return null;
             var ulNode = node.OwnerDocument.CreateElement("ul");
-            ulNode.Attributes.Add("class", new [] {"level" + Level++, cls, model.Id}.Where(el => !string.IsNullOrEmpty(el)).ToDelimitedString(" "));
-            for (var i = 0; i < l; i++) {
+            ulNode.Attributes.Add("class",
+                new[] { "level" + _level++, cls, model.Id }.Where(el => !string.IsNullOrEmpty(el))
+                    .ToDelimitedString(" "));
+            for (var i = 0; i < l; i++)
+            {
                 var item = model.Children[i];
                 var href = item.Href;
                 var name = item.Name;
@@ -205,14 +195,31 @@ namespace DocFx.Plugins.ExtractArticleAffix
                 {
                     liNode.InnerHtml = name;
                 }
-                var lvl = Level;
+
+                var lvl = _level;
                 var child = GetList(node, item, cls);
                 if (child != null) liNode.AppendChild(child);
-                Level = lvl;
+                _level = lvl;
                 ulNode.AppendChild(liNode);
             }
-            Level = 1;
+
+            _level = 1;
             return ulNode;
+        }
+
+        public class Header
+        {
+            public string Type;
+
+            [JsonIgnore] public Header Parent;
+
+            public string Id;
+
+            public string Name;
+
+            public string Href;
+
+            public List<Header> Children = new List<Header>();
         }
     }
 }
