@@ -68,17 +68,24 @@ namespace DocFx.Plugins.ExtractArticleAffix
                     stream.Position = 0;
 
                     var sideAffix = html.DocumentNode.SelectSingleNode("//div[@id=\"affix\"]");
-                    var test = TraverseArticle(html.DocumentNode);
-                    if (test.Count <= 0)
+                    var sideAffixContainer = sideAffix.ParentNode;
+                    var headerTree = TraverseArticle(html.DocumentNode);
+                    if (headerTree.Count <= 0 || headerTree.Count == 1 && headerTree[0].Children.Count <= 0)
                     {
-                        sideAffix.Attributes.Add("class", "empty");
-                        sideAffix.Attributes.Add("style", "display: none;");
-                        continue;
-                    }
 
-                    var test2 = FormList(html.DocumentNode, test, new[] { "nav", "bs-docs-sidenav" });
-                    sideAffix.InnerHtml = "";
-                    sideAffix.AppendChild(test2);
+                        var classAttr = sideAffixContainer.GetOrCreateAttribute("class");
+                        var classes = classAttr.Value.Split(' ');
+                        classAttr.Value = string.Join(" ", classes.Append("empty"));
+                        var styleAttr = sideAffixContainer.GetOrCreateAttribute("style");
+                        var styles = styleAttr.Value;
+                        styleAttr.Value = "display: none;" + (string.IsNullOrEmpty(styles) ? "" : " ") + styles;
+                    }
+                    else
+                    {
+                        var headerNodes = FormList(html.DocumentNode, headerTree, new[] { "nav", "bs-docs-sidenav" });
+                        sideAffix.InnerHtml = "";
+                        sideAffix.AppendChild(headerNodes);
+                    }
 
                     html.Save(stream, Encoding.UTF8);
                     stream.Position = 0;
@@ -101,10 +108,8 @@ namespace DocFx.Plugins.ExtractArticleAffix
 
         private static bool IsConceptualArticle(HtmlNode htmlNode)
         {
-            return htmlNode
-                .SelectSingleNode(
-                    "//div[contains(concat(\" \", normalize-space(@class), \" \"), \" content-column \")]")
-                .Attributes["class"].Value.Split(' ').Contains("Conceptual");
+            return htmlNode.SelectWithClassName("content-column").Attributes["class"].Value.Split(' ')
+                .Contains("Conceptual");
         }
 
         private static List<Header> TraverseArticle(HtmlNode htmlRoot)
@@ -220,6 +225,26 @@ namespace DocFx.Plugins.ExtractArticleAffix
             public string Href;
 
             public List<Header> Children = new List<Header>();
+        }
+    }
+
+    internal static class HtmlNodeHelper
+    {
+        public static HtmlAttribute GetOrCreateAttribute(this HtmlNode htmlNode, string name)
+        {
+            var classAttr = htmlNode.Attributes[name];
+            if (classAttr == null)
+            {
+                htmlNode.Attributes.Add(classAttr = htmlNode.OwnerDocument.CreateAttribute(name, ""));
+            }
+
+            return classAttr;
+        }
+
+        public static HtmlNode SelectWithClassName(this HtmlNode htmlNode, string name)
+        {
+            return htmlNode.SelectSingleNode("//div[contains(concat(\" \", normalize-space(@class), \" \"), \" " +
+                                             name + " \")]");
         }
     }
 }
