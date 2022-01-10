@@ -128,7 +128,7 @@ namespace DocFx.Plugins.ExtractArticleAffix
 
             foreach (var header in headers)
             {
-                var xref = header.ChildNodes.First();
+                var xref = header.ChildNodes.FirstOrDefault();
                 var obj = new Header
                 {
                     Parent = curr,
